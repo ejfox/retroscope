@@ -1,0 +1,26 @@
+{
+  "name": "retroscope",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node index.js",
+    "analyze": "node index.js --analyze",
+    "report": "node index.js --report",
+    "dry": "node index.js --dry-run",
+    "check": "node index.js --health-check",
+    "verify-config": "node index.js --verify-config"
+  },
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@google/generative-ai": "^0.21.0",
+    "cloudinary": "^2.5.1",
+    "dotenv": "^16.4.7",
+    "minimist": "^1.2.8",
+    "node-fetch": "^3.3.2",
+    "winston": "^3.17.0"
+  }
+}
