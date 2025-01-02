@@ -27,6 +27,7 @@ import winston from "winston";
 import { promisify } from "util";
 import fetch from "node-fetch";
 import minimist from "minimist";
+import LokiTransport from "winston-loki";
 
 // Load environment variables and validate required ones
 dotenv.config();
@@ -60,25 +61,12 @@ if (missingEnvVars.length > 0) {
  * - debug.log: All logs including debug statements
  * - combined.log: Info and above
  */
-const logger = winston.createLogger({
-  level: process.env.LOG_LEVEL || "info",
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.json(),
-    winston.format.printf(({ timestamp, level, message, ...meta }) => {
-      return `${timestamp} [${level.toUpperCase()}]: ${message} ${
-        Object.keys(meta).length ? JSON.stringify(meta) : ""
-      }`;
-    })
-  ),
-  transports: [
+const createLogger = () => {
+  const transports = [
+    // Keep existing file transports for local debugging
     new winston.transports.File({
       filename: "logs/error.log",
       level: "error",
-    }),
-    new winston.transports.File({
-      filename: "logs/debug.log",
-      level: "debug",
     }),
     new winston.transports.File({
       filename: "logs/combined.log",
@@ -89,8 +77,101 @@ const logger = winston.createLogger({
         winston.format.simple()
       ),
     }),
-  ],
-});
+  ];
+
+  // Add Loki transport if configured
+  if (process.env.LOKI_HOST) {
+    const lokiConfig = {
+      host: process.env.LOKI_HOST,
+      basicAuth: process.env.LOKI_BASIC_AUTH,
+      labels: {
+        job: process.env.LOKI_JOB_NAME || "retroscope",
+        component: process.env.LOKI_COMPONENT || "image-analysis",
+        environment: process.env.LOKI_ENVIRONMENT || "production",
+        service: "retroscope",
+        version: process.env.npm_package_version || "unknown",
+      },
+      json: true,
+      format: winston.format.json(),
+      replaceTimestamp: true,
+      interval: 5,
+      batching: true,
+      // Add these for debugging
+      onConnectionError: (error) => {
+        console.error("Loki connection error:", error);
+      },
+      timeout: 10000, // 10s timeout
+      gracefulShutdown: true,
+    };
+
+    try {
+      const lokiTransport = new LokiTransport(lokiConfig);
+
+      // Add error handler
+      lokiTransport.on("error", (error) => {
+        console.error("Loki transport error:", error);
+      });
+
+      transports.push(lokiTransport);
+
+      // Log config immediately to console
+      console.log("Loki config:", {
+        host: lokiConfig.host,
+        job: lokiConfig.labels.job,
+        component: lokiConfig.labels.component,
+        environment: lokiConfig.labels.environment,
+      });
+    } catch (error) {
+      console.error("Failed to initialize Loki transport:", error);
+    }
+  }
+
+  const logger = winston.createLogger({
+    level: process.env.LOG_LEVEL || "info",
+    format: winston.format.combine(
+      winston.format.timestamp(),
+      winston.format.json(),
+      winston.format.printf(({ timestamp, level, message, ...meta }) => {
+        // Add metrics labels for Grafana
+        if (meta.event_type === "metric") {
+          return JSON.stringify({
+            timestamp,
+            level,
+            message,
+            metric_name: meta.metric_name,
+            metric_value: meta.metric_value,
+            ...meta,
+          });
+        }
+        return JSON.stringify({
+          timestamp,
+          level,
+          message,
+          ...meta,
+        });
+      })
+    ),
+    defaultMeta: {
+      service: "retroscope",
+      version: process.env.npm_package_version,
+    },
+    transports,
+  });
+
+  // Log Loki config AFTER logger is created
+  if (process.env.LOKI_HOST) {
+    logger.info("Loki transport configured", {
+      host: process.env.LOKI_HOST,
+      job: process.env.LOKI_JOB_NAME,
+      component: process.env.LOKI_COMPONENT,
+      environment: process.env.LOKI_ENVIRONMENT,
+    });
+  }
+
+  return logger;
+};
+
+const logger = createLogger();
 
 // Initialize Cloudinary with error handling
 try {
@@ -182,6 +263,27 @@ class TokenUsageTracker {
     this.details.push(detail);
 
     logger.debug("Token/Cost analysis:", detail);
+
+    // Add metrics for Grafana
+    logger.info("METRIC:tokens_used", {
+      event_type: "metric",
+      metric_name: "tokens_used",
+      metric_value: imageTokens + outputTokens,
+      image_id: imageData.public_id,
+      is_screenshot: isScreenshot,
+      labels: {
+        metric: "tokens_used",
+        image_type: isScreenshot ? "screenshot" : "photo",
+      },
+    });
+
+    logger.info("METRIC:processing_cost", {
+      event_type: "metric",
+      metric_name: "processing_cost",
+      metric_value: totalCost,
+      image_id: imageData.public_id,
+      is_screenshot: isScreenshot,
+    });
   }
 
   getReport() {
@@ -195,7 +297,7 @@ class TokenUsageTracker {
       ? Number((this.totalCost / this.processedImages).toFixed(4))
       : 0;
 
-    return {
+    const report = {
       summary: {
         totalTokens: this.totalTokens,
         totalCost: Number(this.totalCost.toFixed(4)),
@@ -223,6 +325,24 @@ class TokenUsageTracker {
       // Include all per-image details
       details: this.details,
     };
+
+    // Add final metrics
+    logger.info("METRIC:total_cost", {
+      event_type: "metric",
+      metric_name: "total_cost",
+      metric_value: report.summary.totalCost,
+      processed_images: report.summary.processedImages,
+      failed_images: report.summary.failedImages,
+    });
+
+    logger.info("METRIC:processing_speed", {
+      event_type: "metric",
+      metric_name: "images_per_second",
+      metric_value: report.summary.imagesPerSecond,
+      total_duration: report.summary.durationSeconds,
+    });
+
+    return report;
   }
 }
 

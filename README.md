@@ -143,3 +143,71 @@ Example response structure:
 ## License
 
 MIT
+
+## Grafana Queries
+
+### Cost Tracking
+```logql
+# Total cost over time
+sum(rate({job="retroscope"} |= "METRIC:processing_cost" | json | unwrap metric_value [1m]))
+
+# Average cost per image type
+avg by (is_screenshot) (
+  {job="retroscope"} |= "METRIC:processing_cost" 
+  | json 
+  | unwrap metric_value
+)
+```
+
+### Processing Speed
+```logql
+# Images processed per minute
+sum(rate({job="retroscope"} |= "METRIC:images_per_second" | json | unwrap metric_value [1m]))
+
+# Processing duration histogram
+{job="retroscope"} |= "METRIC:processing_speed"
+| json
+| unwrap total_duration
+| histogram duration_seconds
+```
+
+### Token Usage
+```logql
+# Token usage by image type
+sum by (is_screenshot) (
+  {job="retroscope"} |= "METRIC:tokens_used"
+  | json
+  | unwrap metric_value
+)
+
+# Average tokens per image over time
+avg(rate({job="retroscope"} |= "METRIC:tokens_used" | json | unwrap metric_value [5m]))
+```
+
+### Error Tracking
+```logql
+# Error rate
+sum(rate({job="retroscope", level="error"} [5m]))
+
+# Failed images count
+{job="retroscope"} |= "METRIC:total_cost"
+| json
+| unwrap failed_images
+```
+
+### Success Rate
+```logql
+# Successful vs failed processing ratio
+sum by (success) (
+  {job="retroscope"} |= "METRIC:processing_cost"
+  | json
+  | unwrap metric_value
+)
+```
+
+These queries can be used to create dashboards showing:
+- Cost per image/batch
+- Processing speed and efficiency
+- Token usage patterns
+- Error rates and types
+- Success/failure ratios
