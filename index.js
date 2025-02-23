@@ -28,7 +28,8 @@ import { promisify } from "util";
 import fetch from "node-fetch";
 import minimist from "minimist";
 import LokiTransport from "winston-loki";
-const express = require("express");
+import express from "express";
+
 const app = express();
 
 // Load environment variables and validate required ones
