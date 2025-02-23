@@ -55,6 +55,17 @@ if (missingEnvVars.length > 0) {
   process.exit(1);
 }
 
+// Health check endpoint
+app.get("/health", (req, res) => {
+  res.status(200).json({ status: "healthy" });
+});
+
+// Start Express server FIRST
+const PORT = process.env.PORT || 4242;
+app.listen(PORT, () => {
+  console.log(`Health check server listening on port ${PORT}`);
+});
+
 /**
  * Logging Configuration
  *
@@ -1215,14 +1226,3 @@ async function gracefulShutdown(logger) {
     process.exit(1);
   }
 }
-
-// Health check endpoint
-app.get("/health", (req, res) => {
-  res.status(200).json({ status: "healthy" });
-});
-
-// Start Express server
-const PORT = process.env.PORT || 4242;
-app.listen(PORT, () => {
-  logger.info(`Health check server listening on port ${PORT}`);
-});
