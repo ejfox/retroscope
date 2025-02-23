@@ -32,6 +32,132 @@ npm install
 cp .env.example .env
 ```
 
+## Docker Deployment
+
+The application can be run in a Docker container with automated scheduling. This is the recommended way to deploy Retroscope in production.
+
+### Prerequisites
+
+- Docker
+- Docker Compose v2.x or higher
+
+### Setup
+
+1. Clone the repository and configure environment:
+```bash
+git clone https://github.com/yourusername/retroscope.git
+cd retroscope
+cp .env.example .env
+```
+
+2. Edit `.env` with your credentials:
+```env
+CLOUDINARY_CLOUD_NAME=your_cloud_name
+CLOUDINARY_API_KEY=your_api_key
+CLOUDINARY_API_SECRET=your_api_secret
+GOOGLE_API_KEY=your_gemini_api_key
+```
+
+3. Start the containers:
+```bash
+# Build and start in detached mode
+docker compose up -d --build
+
+# Verify containers are running and healthy
+docker compose ps
+```
+
+This will start two containers:
+- `retroscope`: The main application container with health monitoring
+- `scheduler`: An Ofelia scheduler that runs the app on a schedule
+
+### Production Configuration
+
+The Docker setup includes several production-ready features:
+
+- **Health Checks**: Both containers are monitored for health status
+- **Logging**: JSON log files with rotation (100MB max size, 3 files kept)
+- **Security**: Non-root user in containers
+- **Resource Management**: Automatic container restarts on failure
+- **Error Handling**: Job overlap prevention and timeout settings
+
+### Scheduling
+
+The application runs at 50 minutes past every hour by default, processing up to 100 images per run. Configuration is in `config/ofelia.ini`:
+
+```ini
+[global]
+smtp-host = ""  # Disable email notifications
+
+[job-exec "process-images"]
+schedule = 0 50 * * * *  # Run at 50 minutes past every hour
+container = retroscope_retroscope_1
+command = npm start -- --n=100 --verbose
+no-overlap = true
+on-error = "continue"
+timeout = 45m  # Maximum runtime of 45 minutes
+```
+
+Common schedule patterns:
+- `0 50 * * * *`: Every hour at minute 50 (default)
+- `0 */30 * * * *`: Every 30 minutes
+- `0 0 */2 * * *`: Every 2 hours at minute 0
+- `0 0 0 * * *`: Once per day at midnight
+
+### Monitoring
+
+Monitor the application's health and logs:
+
+```bash
+# Check container health status
+docker compose ps
+
+# View application logs
+docker compose logs retroscope
+
+# View scheduler logs
+docker compose logs scheduler
+
+# Follow all logs in real-time
+docker compose logs -f
+
+# View specific container's last 100 lines
+docker compose logs --tail=100 retroscope
+```
+
+### Maintenance
+
+To update the application:
+
+```bash
+# Pull latest changes
+git pull
+
+# Rebuild and restart containers
+docker compose down
+docker compose up -d --build
+
+# Verify health
+docker compose ps
+```
+
+To stop the application:
+```bash
+docker compose down
+```
+
+For debugging:
+```bash
+# View detailed container information
+docker compose ps -a
+
+# Check container resource usage
+docker stats
+
+# Enter container for debugging
+docker compose exec retroscope /bin/bash
+```
+
 ## Environment Variables
 
 ```env

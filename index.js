@@ -28,6 +28,8 @@ import { promisify } from "util";
 import fetch from "node-fetch";
 import minimist from "minimist";
 import LokiTransport from "winston-loki";
+const express = require("express");
+const app = express();
 
 // Load environment variables and validate required ones
 dotenv.config();
@@ -96,30 +98,58 @@ const createLogger = () => {
       replaceTimestamp: true,
       interval: 5,
       batching: true,
-      // Add these for debugging
       onConnectionError: (error) => {
         console.error("Loki connection error:", error);
       },
-      timeout: 10000, // 10s timeout
-      gracefulShutdown: true,
+      // Reduce batching to debug more easily
+      batchInterval: 1,
+      maxBatchSize: 1,
+      // Add these debug options
+      debug: true,
+      silentFail: false,
+      flushOnExit: true,
+      timeout: 5000, // Reduce timeout to fail faster
+      retries: 1, // Reduce retries to fail faster
     };
 
     try {
       const lokiTransport = new LokiTransport(lokiConfig);
 
-      // Add error handler
       lokiTransport.on("error", (error) => {
         console.error("Loki transport error:", error);
       });
 
+      lokiTransport.on("logged", (info) => {
+        console.log("Successfully sent to Loki:", {
+          timestamp: info.timestamp,
+          level: info.level,
+          message: info.message?.substring(0, 50) + "...",
+        });
+      });
+
+      // Add more event listeners for debugging
+      lokiTransport.on("warn", (warning) => {
+        console.warn("Loki transport warning:", warning);
+      });
+
+      lokiTransport.on("batch", (batch) => {
+        console.log("Sending batch to Loki:", {
+          size: batch.length,
+          firstMessage: batch[0]?.message?.substring(0, 50) + "...",
+        });
+      });
+
       transports.push(lokiTransport);
 
-      // Log config immediately to console
-      console.log("Loki config:", {
+      console.log("Attempting Loki connection with config:", {
         host: lokiConfig.host,
         job: lokiConfig.labels.job,
         component: lokiConfig.labels.component,
         environment: lokiConfig.labels.environment,
+        batching: lokiConfig.batching,
+        interval: lokiConfig.interval,
+        batchInterval: lokiConfig.batchInterval,
+        maxBatchSize: lokiConfig.maxBatchSize,
       });
     } catch (error) {
       console.error("Failed to initialize Loki transport:", error);
@@ -699,9 +729,12 @@ async function main() {
       reportPath,
       ...report,
     });
+
+    await gracefulShutdown(logger);
   } catch (error) {
     logger.error("Error in main process:", error);
-    process.exit(1);
+    await gracefulShutdown(logger);
+    throw error;
   }
 }
 
@@ -1012,23 +1045,13 @@ async function processBatch(images, tracker) {
 
 // Add graceful shutdown handling
 process.on("SIGINT", async () => {
-  logger.info("Graceful shutdown initiated...");
-  try {
-    // Save any pending reports
-    const report = globalTracker?.getReport();
-    if (report) {
-      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-      const reportPath = path.join(
-        "reports",
-        `usage_report_${timestamp}_interrupted.json`
-      );
-      await fs.writeFile(reportPath, JSON.stringify(report, null, 2));
-      logger.info("Saved interrupt report:", reportPath);
-    }
-  } catch (error) {
-    logger.error("Error during shutdown:", error);
-  }
-  process.exit(0);
+  console.log("Received SIGINT");
+  await gracefulShutdown(logger);
+});
+
+process.on("SIGTERM", async () => {
+  console.log("Received SIGTERM");
+  await gracefulShutdown(logger);
 });
 
 // Add this function
@@ -1161,3 +1184,38 @@ async function exportImageData(fromDate, toDate) {
     throw error;
   }
 }
+
+// Add this function
+async function gracefulShutdown(logger) {
+  console.log("Starting graceful shutdown...");
+
+  try {
+    // Get all transports that need closing
+    const lokiTransports = logger.transports.filter(
+      (t) => t instanceof LokiTransport
+    );
+
+    // Close each Loki transport
+    for (const transport of lokiTransports) {
+      console.log("Closing Loki transport...");
+      if (transport.close) {
+        await promisify(transport.close.bind(transport))();
+      }
+    }
+
+    console.log("All transports closed");
+
+    // Small delay to ensure last logs are sent
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    process.exit(0);
+  } catch (error) {
+    console.error("Error during shutdown:", error);
+    process.exit(1);
+  }
+}
+
+// Health check endpoint
+app.get("/health", (req, res) => {
+  res.status(200).json({ status: "healthy" });
+});
