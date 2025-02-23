@@ -5,10 +5,13 @@ services:
     build: .
     environment:
       - NODE_ENV=production
+      - PORT=4242
       - CLOUDINARY_CLOUD_NAME=${CLOUDINARY_CLOUD_NAME}
       - CLOUDINARY_API_KEY=${CLOUDINARY_API_KEY}
       - CLOUDINARY_API_SECRET=${CLOUDINARY_API_SECRET}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+    ports:
+      - "4242:4242"
     volumes:
       - ./logs:/app/logs
     logging:
@@ -17,7 +20,7 @@ services:
         max-size: "100m"
         max-file: "3"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:4242/health"]
       interval: 30s
       timeout: 10s
       retries: 3

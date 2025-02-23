@@ -1219,3 +1219,9 @@ async function gracefulShutdown(logger) {
 app.get("/health", (req, res) => {
   res.status(200).json({ status: "healthy" });
 });
+
+// Start Express server
+const PORT = process.env.PORT || 4242;
+app.listen(PORT, () => {
+  logger.info(`Health check server listening on port ${PORT}`);
+});
