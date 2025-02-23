@@ -4,7 +4,6 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node index.js",
     "analyze": "node index.js --analyze",
     "report": "node index.js --report",
