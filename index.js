@@ -29,8 +29,54 @@ import fetch from "node-fetch";
 import minimist from "minimist";
 import LokiTransport from "winston-loki";
 import express from "express";
+import os from "os";
+import crypto from "crypto";
 
 const app = express();
+
+// Create temp directory for image processing
+const TEMP_DIR = path.join(os.tmpdir(), "retroscope-temp");
+
+// Function to ensure temp directory exists and is empty
+async function initTempDir() {
+  try {
+    await fs.access(TEMP_DIR);
+    // Clean existing temp files
+    const files = await fs.readdir(TEMP_DIR);
+    await Promise.all(
+      files.map((file) =>
+        fs
+          .unlink(path.join(TEMP_DIR, file))
+          .catch((err) =>
+            logger.warn(`Failed to delete temp file ${file}:`, err)
+          )
+      )
+    );
+  } catch {
+    // Directory doesn't exist, create it
+    await fs.mkdir(TEMP_DIR, { recursive: true });
+  }
+  logger.info(`Initialized temp directory: ${TEMP_DIR}`);
+}
+
+// Function to clean up temp directory
+async function cleanupTempDir() {
+  try {
+    const files = await fs.readdir(TEMP_DIR);
+    await Promise.all(
+      files.map((file) =>
+        fs
+          .unlink(path.join(TEMP_DIR, file))
+          .catch((err) =>
+            logger.warn(`Failed to delete temp file ${file}:`, err)
+          )
+      )
+    );
+    logger.info(`Cleaned up ${files.length} temporary files`);
+  } catch (error) {
+    logger.error("Error cleaning temp directory:", error);
+  }
+}
 
 // Load environment variables and validate required ones
 dotenv.config();
@@ -507,6 +553,7 @@ Be thorough with text capture but concise in description. Use "quotes" for ALL e
  */
 async function analyzeImageWithGemini(imageUrl) {
   logger.debug("Starting Gemini analysis", { imageUrl });
+  let tempFilePath = null;
 
   try {
     // Fetch the image
@@ -517,9 +564,17 @@ async function analyzeImageWithGemini(imageUrl) {
       );
     }
 
-    // Get the image data as ArrayBuffer instead of Buffer
+    // Create unique temp file name
+    const tempFileName = `${crypto.randomBytes(16).toString("hex")}.tmp`;
+    tempFilePath = path.join(TEMP_DIR, tempFileName);
+
+    // Save image to temp file
     const imageData = await imageResponse.arrayBuffer();
-    const base64Data = Buffer.from(imageData).toString("base64");
+    await fs.writeFile(tempFilePath, Buffer.from(imageData));
+
+    // Read the saved file and convert to base64
+    const fileData = await fs.readFile(tempFilePath);
+    const base64Data = fileData.toString("base64");
 
     // Initialize the model with Gemini-1.5-Flash-8B
     const model = genAI.getGenerativeModel({
@@ -578,6 +633,16 @@ async function analyzeImageWithGemini(imageUrl) {
       });
     }
     return "";
+  } finally {
+    // Clean up temp file
+    if (tempFilePath) {
+      try {
+        await fs.unlink(tempFilePath);
+        logger.debug("Cleaned up temp file:", tempFilePath);
+      } catch (error) {
+        logger.warn("Failed to clean up temp file:", { tempFilePath, error });
+      }
+    }
   }
 }
 
@@ -720,6 +785,7 @@ async function main() {
   try {
     await ensureDirectoryExists("logs");
     await ensureDirectoryExists("reports");
+    await initTempDir(); // Initialize temp directory
 
     const images = await getCloudinaryImages(
       process.env.BATCH_SIZE ? parseInt(process.env.BATCH_SIZE) : 100
@@ -868,6 +934,7 @@ async function healthCheck() {
     cloudinary: false,
     gemini: false,
     filesystem: false,
+    tempDir: false,
   };
 
   try {
@@ -884,6 +951,9 @@ async function healthCheck() {
     await ensureDirectoryExists("logs");
     await ensureDirectoryExists("reports");
     checks.filesystem = true;
+
+    // Test temp directory functionality
+    checks.tempDir = await testTempDirCleanup();
 
     console.table(checks);
     return Object.values(checks).every(Boolean);
@@ -1011,6 +1081,7 @@ run().catch((error) => {
 // Add batch processing with delay
 async function processBatch(images, tracker) {
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  let processedCount = 0;
 
   // Process in chunks to respect rate limits
   const chunks = [];
@@ -1036,6 +1107,7 @@ async function processBatch(images, tracker) {
 
           if (success) {
             logger.info(`Successfully processed ${image.public_id}`);
+            processedCount++;
           } else {
             logger.error(`Failed to update metadata for ${image.public_id}`);
             tracker.addUsage(0, false);
@@ -1044,13 +1116,22 @@ async function processBatch(images, tracker) {
 
         // Add delay between requests
         await delay(RATE_LIMITS.DELAY_BETWEEN_REQUESTS);
+
+        // Periodic cleanup every 50 images
+        if (processedCount > 0 && processedCount % 50 === 0) {
+          logger.info(
+            `Performing periodic cleanup after ${processedCount} images`
+          );
+          await cleanupTempDir();
+        }
       } catch (error) {
         logger.error(`Failed to process image ${image.public_id}:`, error);
         tracker.addUsage(0, false);
       }
     }
 
-    // Add a small pause between chunks
+    // Add a small pause between chunks and cleanup
+    await cleanupTempDir();
     await delay(1000);
   }
 }
@@ -1202,6 +1283,9 @@ async function gracefulShutdown(logger) {
   console.log("Starting graceful shutdown...");
 
   try {
+    // Clean up temp directory
+    await cleanupTempDir();
+
     // Get all transports that need closing
     const lokiTransports = logger.transports.filter(
       (t) => t instanceof LokiTransport
@@ -1224,5 +1308,62 @@ async function gracefulShutdown(logger) {
   } catch (error) {
     console.error("Error during shutdown:", error);
     process.exit(1);
+  }
+}
+
+// Add near the top with other test functions
+async function testTempDirCleanup() {
+  logger.info("Testing temp directory cleanup...");
+  const testFiles = [];
+
+  try {
+    // Test initialization
+    await initTempDir();
+    const initialFiles = await fs.readdir(TEMP_DIR);
+    if (initialFiles.length > 0) {
+      throw new Error("Temp directory not empty after initialization");
+    }
+    logger.info("✓ Temp directory initialized empty");
+
+    // Test file creation
+    for (let i = 0; i < 3; i++) {
+      const testFile = path.join(TEMP_DIR, `test-${i}.tmp`);
+      await fs.writeFile(testFile, "test content");
+      testFiles.push(testFile);
+    }
+    const filesAfterCreation = await fs.readdir(TEMP_DIR);
+    if (filesAfterCreation.length !== 3) {
+      throw new Error("Failed to create test files");
+    }
+    logger.info("✓ Test files created successfully");
+
+    // Test cleanup
+    await cleanupTempDir();
+    const filesAfterCleanup = await fs.readdir(TEMP_DIR);
+    if (filesAfterCleanup.length > 0) {
+      throw new Error("Temp directory not empty after cleanup");
+    }
+    logger.info("✓ Cleanup successful");
+
+    // Test error handling during cleanup
+    // Create a file with no permissions to test error handling
+    const noPermFile = path.join(TEMP_DIR, "no-perm.tmp");
+    await fs.writeFile(noPermFile, "test content", { mode: 0o444 }); // read-only
+    await cleanupTempDir(); // Should handle error gracefully
+    logger.info("✓ Error handling verified");
+
+    return true;
+  } catch (error) {
+    logger.error("Temp directory cleanup test failed:", error);
+    return false;
+  } finally {
+    // Final cleanup
+    for (const file of testFiles) {
+      try {
+        await fs.unlink(file);
+      } catch (err) {
+        // Ignore cleanup errors
+      }
+    }
   }
 }
