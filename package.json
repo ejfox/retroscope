@@ -9,16 +9,20 @@
     "report": "node index.js --report",
     "dry": "node index.js --dry-run",
     "check": "node index.js --health-check",
-    "verify-config": "node index.js --verify-config"
+    "verify-config": "node index.js --verify-config",
+    "content": "node content-pipeline.js",
+    "content:refresh": "node content-pipeline.js --refresh",
+    "content:test": "node content-pipeline.js --test"
   },
   "author": "",
   "license": "ISC",
   "description": "",
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
+    "bottleneck": "^2.19.5",
     "cloudinary": "^2.5.1",
     "dotenv": "^16.4.7",
-    "express": "^4.18.2",
+    "express": "^4.21.2",
     "minimist": "^1.2.8",
     "node-fetch": "^3.3.2",
     "winston": "^3.17.0",

@@ -1367,3 +1367,42 @@ async function testTempDirCleanup() {
     }
   }
 }
+
+/**
+ * Generates content pitches based on image analysis
+ * @param {string} imageUrl - URL of the image to analyze
+ * @param {string} existingAnalysis - Existing Gemini analysis of the image
+ * @returns {Promise<Array<string>>} Array of content pitch ideas
+ */
+async function generateContentPitches(imageUrl, existingAnalysis) {
+  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-8b" });
+
+  const prompt = `
+    Based on this image analysis, generate 3-10 creative content pitch ideas.
+    Each pitch should be 1-2 sentences and focus on engaging storytelling.
+    Consider different angles: educational, inspirational, behind-the-scenes, etc.
+    
+    Image Analysis:
+    ${existingAnalysis}
+    
+    Format each pitch on a new line.
+    Start each pitch with "PITCH: ".
+  `;
+
+  try {
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
+
+    // Extract pitches from response
+    const pitches = text
+      .split("\n")
+      .filter((line) => line.startsWith("PITCH: "))
+      .map((line) => line.replace("PITCH: ", "").trim());
+
+    return pitches;
+  } catch (error) {
+    logger.error("Error generating content pitches:", error);
+    return [];
+  }
+}
