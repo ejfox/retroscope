@@ -15,6 +15,7 @@ import winston from "winston";
 import fetch from "node-fetch";
 import dotenv from "dotenv";
 import Bottleneck from "bottleneck";
+import fs from "fs/promises";
 
 // Load environment variables
 dotenv.config();
@@ -59,8 +60,8 @@ cloudinaryLimiter.on("failed", (error, jobInfo) => {
 // Initialize Gemini
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
 
-// Discord webhook URL for n8n integration
-const DISCORD_WEBHOOK_URL = "https://n8n.tools.ejfox.com/webhook/new-jep-ques";
+// Discord webhook URL for n8n integration (configurable via env var)
+const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || "https://n8n.tools.ejfox.com/webhook/new-jep-ques";
 
 // Create a logger instance
 const logger = winston.createLogger({
@@ -687,6 +688,13 @@ async function generateContentPitches(image) {
  */
 async function sendContentToDiscord(images) {
   try {
+    // Check if webhook is configured
+    if (!DISCORD_WEBHOOK_URL || DISCORD_WEBHOOK_URL === "https://n8n.tools.ejfox.com/webhook/new-jep-ques") {
+      console.log("📢 Discord webhook not configured - skipping webhook notification");
+      console.log("💡 Set DISCORD_WEBHOOK_URL in your .env file to enable Discord notifications");
+      return true; // Return success so pipeline continues
+    }
+
     const topImage = images[0];
     const imageUrl =
       topImage.url ||
@@ -984,6 +992,147 @@ function formatTextForOverlay(text, maxCharsPerLine) {
 }
 
 /**
+ * Generates a pretty HTML report of content opportunities
+ * @param {Array} images - Array of images with content data
+ * @param {Object} stats - Pipeline statistics
+ * @returns {string} HTML content
+ */
+function generateContentReport(images, stats) {
+  const timestamp = new Date().toISOString();
+  const dateStr = new Date().toLocaleDateString();
+  
+  const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Retroscope Content Opportunities - ${dateStr}</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; line-height: 1.6; }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 12px; margin-bottom: 30px; }
+        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; }
+        .stat-card { background: #f8f9fa; padding: 20px; border-radius: 8px; text-align: center; }
+        .stat-number { font-size: 2rem; font-weight: bold; color: #667eea; }
+        .opportunity { background: white; border: 1px solid #e9ecef; border-radius: 12px; padding: 25px; margin-bottom: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .opportunity img { max-width: 100%; height: auto; border-radius: 8px; margin-bottom: 15px; }
+        .score { display: inline-block; background: #28a745; color: white; padding: 5px 12px; border-radius: 20px; font-weight: bold; margin-bottom: 10px; }
+        .score.medium { background: #ffc107; color: #212529; }
+        .score.low { background: #6c757d; }
+        .pitches { background: #f8f9fa; padding: 15px; border-radius: 8px; margin-top: 15px; }
+        .pitch { margin-bottom: 10px; padding: 10px; background: white; border-left: 4px solid #667eea; }
+        .meta { color: #6c757d; font-size: 0.9rem; margin-top: 10px; }
+        .footer { text-align: center; color: #6c757d; margin-top: 40px; padding-top: 20px; border-top: 1px solid #e9ecef; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🎯 Content Opportunities Report</h1>
+        <p>Generated on ${dateStr} • Found ${images.length} high-potential opportunities</p>
+    </div>
+    
+    <div class="stats">
+        <div class="stat-card">
+            <div class="stat-number">${stats.totalAnalyzed}</div>
+            <div>Images Analyzed</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number">${images.length}</div>
+            <div>Opportunities Found</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number">${stats.totalPitches}</div>
+            <div>Content Pitches</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number">${Math.round(images.reduce((acc, img) => acc + img.score, 0) / images.length)}</div>
+            <div>Average Score</div>
+        </div>
+    </div>
+    
+    ${images.map((image, index) => `
+    <div class="opportunity">
+        <h2>Content Opportunity #${index + 1}</h2>
+        <div class="score ${image.score >= 80 ? 'high' : image.score >= 60 ? 'medium' : 'low'}">${image.score}/100</div>
+        
+        <img src="${image.url}" alt="Content opportunity ${index + 1}" loading="lazy">
+        
+        <h3>Why This Works</h3>
+        <p><strong>${image.reason}</strong></p>
+        
+        <div class="meta">
+            <strong>Target Audience:</strong> ${image.audience}<br>
+            <strong>Best Platform:</strong> ${image.best_platform}<br>
+            <strong>Image ID:</strong> ${image.id}<br>
+            <strong>Created:</strong> ${new Date(image.created_at).toLocaleDateString()}
+        </div>
+        
+        <div class="pitches">
+            <h4>Content Pitch Ideas</h4>
+            ${image.pitches.map(pitch => `<div class="pitch">💡 ${pitch}</div>`).join('')}
+        </div>
+    </div>
+    `).join('')}
+    
+    <div class="footer">
+        <p>Generated by Retroscope • ${timestamp}</p>
+        <p>Ready to create content? Check your Cloudinary for images tagged "content_candidate"</p>
+    </div>
+</body>
+</html>`;
+  
+  return html;
+}
+
+/**
+ * Generates a markdown report of content opportunities
+ * @param {Array} images - Array of images with content data
+ * @param {Object} stats - Pipeline statistics
+ * @returns {string} Markdown content
+ */
+function generateMarkdownReport(images, stats) {
+  const timestamp = new Date().toISOString();
+  const dateStr = new Date().toLocaleDateString();
+  
+  const markdown = `# 🎯 Content Opportunities Report
+
+*Generated on ${dateStr}*
+
+## 📊 Summary
+
+- **Images Analyzed:** ${stats.totalAnalyzed}
+- **Opportunities Found:** ${images.length}
+- **Content Pitches Generated:** ${stats.totalPitches}
+- **Average Score:** ${Math.round(images.reduce((acc, img) => acc + img.score, 0) / images.length)}/100
+
+${images.map((image, index) => `
+## Content Opportunity #${index + 1}
+
+**Score:** ${image.score}/100 ${image.score >= 80 ? '🔥' : image.score >= 60 ? '⭐' : '💡'}
+
+![Content opportunity ${index + 1}](${image.url})
+
+**Why This Works:** ${image.reason}
+
+**Target Audience:** ${image.audience}  
+**Best Platform:** ${image.best_platform}  
+**Image ID:** \`${image.id}\`  
+**Created:** ${new Date(image.created_at).toLocaleDateString()}
+
+### Content Pitch Ideas
+
+${image.pitches.map(pitch => `- 💡 ${pitch}`).join('\n')}
+
+---
+`).join('')}
+
+*Generated by Retroscope on ${timestamp}*
+`;
+  
+  return markdown;
+}
+
+/**
  * Main content pipeline function
  */
 async function runContentPipeline() {
@@ -1056,6 +1205,41 @@ async function runContentPipeline() {
           tags: [...(image.tags || []), "content_candidate"],
         });
       }
+
+      // 7. Generate pretty reports
+      const stats = {
+        totalAnalyzed: images.length,
+        totalPitches: imagesWithPitches.reduce((acc, img) => acc + img.pitches.length, 0)
+      };
+      
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      
+      // Generate HTML report
+      const htmlReport = generateContentReport(imagesWithPitches, stats);
+      const htmlPath = `reports/content_opportunities_${timestamp}.html`;
+      await fs.writeFile(htmlPath, htmlReport);
+      
+      // Generate Markdown report
+      const markdownReport = generateMarkdownReport(imagesWithPitches, stats);
+      const markdownPath = `reports/content_opportunities_${timestamp}.md`;
+      await fs.writeFile(markdownPath, markdownReport);
+
+      // Add satisfying user feedback
+      console.log("\n🎯 CONTENT PIPELINE COMPLETE!");
+      console.log(`🔍 Analyzed ${images.length} recent images`);
+      console.log(`⭐ Found ${selectedImages.length} high-potential content opportunities`);
+      console.log(`🎨 Generated ${imagesWithPitches.reduce((acc, img) => acc + img.pitches.length, 0)} content pitches`);
+      console.log(`📤 Sent opportunities to Discord webhook`);
+      console.log(`📄 Generated reports:`);
+      console.log(`   • HTML: ${htmlPath}`);
+      console.log(`   • Markdown: ${markdownPath}`);
+      console.log("\n💡 Next steps:");
+      console.log("• Check your Discord for the full content report");
+      console.log(`• Open ${htmlPath} in your browser for a pretty report`);
+      console.log("• Review images tagged as 'content_candidate' in Cloudinary");
+    } else {
+      console.log("\n❌ Content pipeline failed to send to Discord");
+      console.log("Check your webhook configuration and try again");
     }
   } catch (error) {
     logger.error("Error in content pipeline:", error);
@@ -1083,10 +1267,75 @@ if (process.argv[1].endsWith("content-pipeline.js")) {
     );
   }
 
-  runContentPipeline().catch((error) => {
-    logger.error("Fatal error in content pipeline:", error);
-    process.exit(1);
-  });
+  // Check for show-top flag
+  const showTop = process.argv.includes("--show-top");
+  if (showTop) {
+    // Extract count from --show-top=N format
+    const countArg = process.argv.find(arg => arg.startsWith("--show-top="));
+    const count = countArg ? parseInt(countArg.split("=")[1]) : 10;
+    
+    showTopOpportunities(count).catch((error) => {
+      logger.error("Fatal error showing top opportunities:", error);
+      process.exit(1);
+    });
+  } else {
+    runContentPipeline().catch((error) => {
+      logger.error("Fatal error in content pipeline:", error);
+      process.exit(1);
+    });
+  }
+}
+
+/**
+ * Shows the top-scoring content opportunities
+ * @param {number} count - Number of top images to show
+ */
+async function showTopOpportunities(count = 10) {
+  try {
+    console.log(`\n🔍 Finding your top ${count} content opportunities...\n`);
+    
+    // Get images with cached scores
+    const images = await getImagesWithDescriptions(500, 30); // Look back 30 days
+    
+    // Filter for images that have been scored
+    const scoredImages = images.filter(img => img.cached_score !== null);
+    
+    if (scoredImages.length === 0) {
+      console.log("❌ No scored images found.");
+      console.log("💡 Run 'npm run content' first to analyze and score your images");
+      return;
+    }
+    
+    // Sort by score and take top N
+    const topImages = scoredImages
+      .sort((a, b) => b.cached_score - a.cached_score)
+      .slice(0, count);
+    
+    console.log(`📊 Found ${scoredImages.length} scored images, showing top ${topImages.length}:\n`);
+    
+    topImages.forEach((image, index) => {
+      const emoji = image.cached_score >= 80 ? '🔥' : image.cached_score >= 60 ? '⭐' : '💡';
+      
+      console.log(`${emoji} #${index + 1} • Score: ${image.cached_score}/100`);
+      console.log(`   Image: ${image.id}`);
+      console.log(`   URL: ${image.url}`);
+      console.log(`   Why: ${image.cached_reason || 'No reason cached'}`);
+      console.log(`   Platform: ${image.cached_platform || 'Not specified'}`);
+      console.log(`   Created: ${new Date(image.created_at).toLocaleDateString()}`);
+      
+      if (image.cached_pitches && image.cached_pitches.length > 0) {
+        console.log(`   Pitches: ${image.cached_pitches.length} ideas available`);
+        console.log(`   Preview: "${image.cached_pitches[0].substring(0, 60)}..."`);
+      }
+      console.log('');
+    });
+    
+    console.log("💡 Want to see full details? Run 'npm run content' to generate a complete report");
+    
+  } catch (error) {
+    logger.error("Error showing top opportunities:", error);
+    console.log("❌ Failed to fetch top opportunities");
+  }
 }
 
 // Export functions for use in other modules
@@ -1097,4 +1346,5 @@ export {
   sendContentToDiscord,
   generateFinalAssets,
   runContentPipeline,
+  showTopOpportunities,
 };

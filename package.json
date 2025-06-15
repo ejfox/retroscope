@@ -12,7 +12,8 @@
     "verify-config": "node index.js --verify-config",
     "content": "node content-pipeline.js",
     "content:refresh": "node content-pipeline.js --refresh",
-    "content:test": "node content-pipeline.js --test"
+    "content:test": "node content-pipeline.js --test",
+    "show-top": "node content-pipeline.js --show-top"
   },
   "author": "",
   "license": "ISC",
