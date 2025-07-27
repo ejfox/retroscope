@@ -663,17 +663,46 @@ async function updateCloudinaryMetadata(
   });
 
   try {
-    // First update the context metadata
+    // First get existing tags and context to preserve them
+    const existingResource = await new Promise((resolve, reject) => {
+      cloudinary.api.resource(publicId, { tags: true, context: true }, (error, result) => {
+        if (error) reject(error);
+        else resolve(result);
+      });
+    });
+    
+    const existingTags = existingResource.tags || [];
+    const updatedTags = [...existingTags];
+    if (!updatedTags.includes("ai_processed")) {
+      updatedTags.push("ai_processed");
+    }
+    
+    // PRESERVE existing context and merge in new AI description
+    const existingContext = existingResource.context?.custom || {};
+    const updatedContext = {
+      ...existingContext,
+      ai_description: description,
+      updated_at: new Date().toISOString(),
+    };
+    
+    logger.debug("Tag and context preservation in AI description update", {
+      publicId,
+      existingTags,
+      updatedTags,
+      tagsPreserved: existingTags.length,
+      tagsAdded: updatedTags.length - existingTags.length,
+      existingContextKeys: Object.keys(existingContext),
+      updatedContextKeys: Object.keys(updatedContext)
+    });
+
+    // Update the context metadata while preserving existing tags and context
     const success = await new Promise((resolve, reject) => {
       cloudinary.uploader.explicit(
         publicId,
         {
           type: "upload",
-          context: {
-            ai_description: description,
-            updated_at: new Date().toISOString(),
-          },
-          tags: ["ai_processed"],
+          context: updatedContext,
+          tags: updatedTags,
         },
         (error, result) => {
           if (error) {

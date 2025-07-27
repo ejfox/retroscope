@@ -282,6 +282,12 @@ async function getImagesWithDescriptions(maxResults = 100, daysBack = 7) {
  */
 async function cacheContentData(publicId, contentData) {
   try {
+    // First, get the current resource to preserve existing tags
+    const currentResource = await getCloudinaryResource(publicId, {
+      context: true,
+      tags: true,
+    });
+
     // Store pitches as JSON string
     const pitchesJson = contentData.pitches
       ? JSON.stringify(contentData.pitches)
@@ -292,16 +298,27 @@ async function cacheContentData(publicId, contentData) {
       score: contentData.score,
       platform: contentData.best_platform,
       pitchesCount: contentData.pitches ? contentData.pitches.length : 0,
+      existingTags: currentResource.tags || [],
     });
 
-    // Add tags for identifying processed content
-    const tags = [...(contentData.tags || [])];
+    // PRESERVE existing tags and add content scoring tag
+    const existingTags = currentResource.tags || [];
+    const tags = [...existingTags];
     if (!tags.includes("content_scored")) {
       tags.push("content_scored");
     }
+    
+    logger.debug("Tag preservation in content scoring", {
+      publicId,
+      existingTags,
+      finalTags: tags,
+      tagsPreserved: existingTags.length,
+      tagsAdded: tags.length - existingTags.length
+    });
 
-    // Cloudinary expects context values to be strings
-    const contextData = {
+    // PRESERVE existing context and merge in new content data
+    const existingContext = currentResource.context?.custom || {};
+    const newContentData = {
       content_score: contentData.score?.toString() || "0",
       content_reason: contentData.reason || "",
       content_audience: contentData.audience || "",
@@ -309,6 +326,19 @@ async function cacheContentData(publicId, contentData) {
       content_pitches: pitchesJson,
       content_updated_at: new Date().toISOString(),
     };
+    
+    // Merge existing context with new content data
+    const contextData = {
+      ...existingContext,
+      ...newContentData
+    };
+    
+    logger.debug("Context preservation in content scoring", {
+      publicId,
+      existingContextKeys: Object.keys(existingContext),
+      newContentKeys: Object.keys(newContentData),
+      finalContextKeys: Object.keys(contextData)
+    });
 
     // Update the metadata in Cloudinary using rate-limited function
     const result = await cloudinaryUpdate(publicId, {
@@ -833,10 +863,17 @@ async function generateFinalAssets(publicId, pitch) {
       });
     }
 
-    // Mark original image as processed
+    // Mark original image as processed (preserving existing tags)
+    const originalResource = await getCloudinaryResource(publicId, { tags: true });
+    const originalTags = originalResource.tags || [];
+    const updatedTags = [...originalTags];
+    if (!updatedTags.includes("content_processed")) {
+      updatedTags.push("content_processed");
+    }
+    
     await cloudinaryUpdate(publicId, {
       type: "upload",
-      tags: ["content_processed"],
+      tags: updatedTags,
     });
 
     logger.info(`Generated final assets for ${publicId}`);
@@ -1198,11 +1235,19 @@ async function runContentPipeline() {
     if (discordSent) {
       logger.info("Content pipeline completed successfully");
 
-      // 6. Tag images as content candidates
+      // 6. Tag images as content candidates (preserving current Cloudinary tags)
       for (const image of selectedImages) {
+        // Get current tags from Cloudinary to ensure we don't lose recent updates
+        const currentResource = await getCloudinaryResource(image.id, { tags: true });
+        const currentTags = currentResource.tags || [];
+        const updatedTags = [...currentTags];
+        if (!updatedTags.includes("content_candidate")) {
+          updatedTags.push("content_candidate");
+        }
+        
         await cloudinary.uploader.explicit(image.id, {
           type: "upload",
-          tags: [...(image.tags || []), "content_candidate"],
+          tags: updatedTags,
         });
       }
 
