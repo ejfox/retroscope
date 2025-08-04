@@ -663,17 +663,46 @@ async function updateCloudinaryMetadata(
   });
 
   try {
-    // First update the context metadata
+    // First get existing tags and context to preserve them
+    const existingResource = await new Promise((resolve, reject) => {
+      cloudinary.api.resource(publicId, { tags: true, context: true }, (error, result) => {
+        if (error) reject(error);
+        else resolve(result);
+      });
+    });
+    
+    const existingTags = existingResource.tags || [];
+    const updatedTags = [...existingTags];
+    if (!updatedTags.includes("ai_processed")) {
+      updatedTags.push("ai_processed");
+    }
+    
+    // PRESERVE existing context and merge in new AI description
+    const existingContext = existingResource.context?.custom || {};
+    const updatedContext = {
+      ...existingContext,
+      ai_description: description,
+      updated_at: new Date().toISOString(),
+    };
+    
+    logger.debug("Tag and context preservation in AI description update", {
+      publicId,
+      existingTags,
+      updatedTags,
+      tagsPreserved: existingTags.length,
+      tagsAdded: updatedTags.length - existingTags.length,
+      existingContextKeys: Object.keys(existingContext),
+      updatedContextKeys: Object.keys(updatedContext)
+    });
+
+    // Update the context metadata while preserving existing tags and context
     const success = await new Promise((resolve, reject) => {
       cloudinary.uploader.explicit(
         publicId,
         {
           type: "upload",
-          context: {
-            ai_description: description,
-            updated_at: new Date().toISOString(),
-          },
-          tags: ["ai_processed"],
+          context: updatedContext,
+          tags: updatedTags,
         },
         (error, result) => {
           if (error) {
@@ -808,6 +837,19 @@ async function main() {
       ...report,
     });
 
+    // Add satisfying user feedback
+    console.log("\n🎉 PROCESSING COMPLETE!");
+    console.log(`✅ Analyzed ${report.summary.processedImages} images`);
+    console.log(`💰 Total cost: $${report.summary.totalCost}`);
+    console.log(`⚡ Processing speed: ${report.summary.imagesPerSecond} images/second`);
+    if (report.summary.failedImages > 0) {
+      console.log(`⚠️  Failed: ${report.summary.failedImages} images`);
+    }
+    console.log(`📊 Detailed report saved to: ${reportPath}`);
+    console.log("\n💡 Next steps:");
+    console.log("• Run 'npm run content' to find your best content opportunities");
+    console.log("• Check the reports/ folder for detailed analytics");
+
     await gracefulShutdown(logger);
   } catch (error) {
     logger.error("Error in main process:", error);
@@ -830,6 +872,7 @@ async function main() {
  * --health-check    Run system health check
  * --verify-config   Verify system configuration
  * --reprocess       Force reprocessing of images
+ * --preview         Show what would be processed without analyzing
  */
 const argv = minimist(process.argv.slice(2), {
   string: ["n", "analyze"],
@@ -841,6 +884,7 @@ const argv = minimist(process.argv.slice(2), {
     "health-check",
     "verify-config",
     "reprocess",
+    "preview",
   ],
   alias: {
     n: "number",
@@ -956,10 +1000,22 @@ async function healthCheck() {
     checks.tempDir = await testTempDirCleanup();
 
     console.table(checks);
-    return Object.values(checks).every(Boolean);
+    
+    const allHealthy = Object.values(checks).every(Boolean);
+    if (allHealthy) {
+      console.log("\n🎉 All systems healthy! Retroscope is ready to analyze your images.");
+      console.log("Try running: npm start -- --n=5 --verbose");
+    } else {
+      console.log("\n❌ Some systems failed. Check your .env file and API credentials.");
+      console.log("Run: npm run verify-config to see what's missing.");
+    }
+    
+    return allHealthy;
   } catch (error) {
     logger.error("Health check failed:", error);
     console.table(checks);
+    console.log("\n❌ Health check failed. Check your .env file and API credentials.");
+    console.log("Run: npm run verify-config to see what's missing.");
     return false;
   }
 }
@@ -1038,6 +1094,39 @@ async function run() {
   // Analyze single image if ID provided
   if (argv.analyze) {
     await analyzeSingleImage(argv.analyze);
+    return;
+  }
+
+  // Preview mode - show what would be processed without analyzing
+  if (argv.preview) {
+    console.log("\n🔍 PREVIEW MODE - Showing what would be analyzed\n");
+    
+    const maxImages = argv.n ? parseInt(argv.n) : 100;
+    const images = await getCloudinaryImages(maxImages);
+    
+    if (images.length === 0) {
+      console.log("❌ No unprocessed images found");
+      return;
+    }
+    
+    console.log(`📊 Found ${images.length} images that would be processed:\n`);
+    
+    images.slice(0, 10).forEach((image, index) => {
+      console.log(`${index + 1}. ${image.public_id}`);
+      console.log(`   URL: ${image.url}`);
+      console.log(`   Created: ${new Date(image.created_at).toLocaleDateString()}`);
+      console.log(`   Size: ${image.width}x${image.height} ${image.format?.toUpperCase()}`);
+      console.log('');
+    });
+    
+    if (images.length > 10) {
+      console.log(`... and ${images.length - 10} more images`);
+    }
+    
+    const estimatedCost = images.length * 0.017; // ~1.7 cents per image
+    console.log(`💰 Estimated cost: $${estimatedCost.toFixed(2)}`);
+    console.log(`⏱️  Estimated time: ${Math.ceil(images.length / 4)} minutes`);
+    console.log("\n💡 Remove --preview flag to start processing");
     return;
   }
 

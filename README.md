@@ -9,18 +9,40 @@
                                       |_|         
 ```
 
-AI-powered image analysis tool that processes images from Cloudinary using Google's Gemini Vision API to generate detailed descriptions. Handles both screenshots and photographs intelligently.
+**Turn your forgotten screenshots into content gold.**
 
-## Features
+Retroscope is your AI-powered personal archivist that transforms your digital breadcrumbs into strategic content opportunities. It crawls through your Cloudinary photo library, intelligently analyzes every screenshot and image with Google's Gemini Vision, and serves up ready-made content pitches for your best visual moments.
 
-- Analyzes screenshots with focus on UI/functionality and exact text capture
-- Processes photographs with focus on composition and visual details
-- Stores descriptions in Cloudinary metadata
-- Smart token usage (16K for screenshots, 32K for photos)
-- Detailed cost tracking (~1.7¢ per image)
-- Rate limiting and pagination handling
+## What It Actually Does
 
-## Installation
+🔍 **The Detective**: Finds all those screenshots you forgot about and extracts EXACTLY what's in them - every button label, error message, code snippet, and piece of UI text.
+
+📊 **The Curator**: Scores each image (0-100) on storytelling potential, uniqueness, and social shareability. No more guessing which random screenshot could go viral.
+
+🎯 **The Pitch Machine**: Generates multiple content angles written in your voice: "This bug you found could be a great Twitter thread about dev tools."
+
+⚙️ **The Automation**: Runs continuously on Docker, sending you daily reports of your best content opportunities via Discord/webhooks.
+
+**Perfect for**: Developers, designers, and creators who capture tons of screenshots but never know which ones are worth sharing.
+
+## Real-World Examples
+
+**Before Retroscope**: You have 2,847 screenshots sitting in Cloudinary. Mostly forgotten.
+
+**After Retroscope**: 
+- "That error message you screenshotted last week? It's scored 87/100 for content potential - here are 4 Twitter thread ideas about debugging workflows."
+- "Your config file screenshot could be an Instagram post about clean code practices."
+- "That dashboard you built has 3 LinkedIn post angles about data visualization."
+
+## Technical Features
+
+- **Intelligent Text Extraction**: Captures exact UI text, error messages, and code snippets from screenshots
+- **Smart Content Scoring**: AI evaluates visual uniqueness, storytelling potential, and social shareability (0-100)
+- **Voice-Matched Pitches**: Generates content ideas that sound like you, not a marketing bot
+- **Cost Efficient**: ~1.7¢ per image analysis with detailed usage tracking
+- **Production Ready**: Docker deployment with health checks, logging, and automated scheduling
+
+## Quick Start
 
 ```bash
 # Clone and install
@@ -28,9 +50,18 @@ git clone https://github.com/yourusername/retroscope.git
 cd retroscope
 npm install
 
-# Copy and configure environment variables
+# Set up your API keys
 cp .env.example .env
+# Edit .env with your Cloudinary and Google API credentials
+
+# Test with 5 images
+npm start -- --n=5 --verbose
+
+# Run content pipeline to get pitches
+npm run content
 ```
+
+**First run?** Retroscope will analyze your most recent images and show you exactly what it found. Look for the detailed console output - it's quite satisfying to see it extract text from screenshots you'd forgotten about.
 
 ## Docker Deployment
 
@@ -167,28 +198,66 @@ CLOUDINARY_API_SECRET=your_api_secret
 GOOGLE_API_KEY=your_gemini_api_key
 ```
 
-## Usage
+## Usage Examples
 
 ```bash
-# Process 10 images
+# Basic image analysis (processes 10 images)
 npm start -- --n=10
 
-# Process with verbose logging
+# Get detailed output to see what it finds
 npm start -- --n=10 --verbose
 
-# Force reprocess already analyzed images
+# Content pipeline: find your best content opportunities
+npm run content
+
+# Force fresh analysis of already processed images
 npm start -- --n=10 --reprocess
 
-# Export all analyzed images
+# Export all your analyzed images as JSON
 npm start -- --export
 
 # Export with date range
 npm start -- --export --export-from="2024-01-01" --export-to="2024-12-31"
+
+# Test mode: smaller batch for trying things out
+npm run content:test
 ```
 
-## Accessing AI Descriptions
+**Pro tip**: Start with `--verbose` to see exactly what text Retroscope extracts from your screenshots. It's surprisingly thorough.
 
-The AI-generated descriptions are stored in Cloudinary's metadata. Here's how to access them:
+## What You Actually Get
+
+### Screenshot Analysis Example
+```
+Image: screenshot_2024_config_panel.png
+Score: 87/100
+
+AI Description:
+"Screenshot of a development configuration panel showing deployment settings for a Node.js application. The interface displays environment variables including 'PORT=4242', 'NODE_ENV=production', and various API keys. The left sidebar shows navigation options for 'Database', 'Monitoring', and 'Security'. A green 'Deploy' button is prominent in the top right, with status indicator showing 'Ready for deployment'. The panel includes form fields for custom domain configuration and SSL certificate settings."
+
+Content Pitches:
+• "Behind the scenes of shipping production Node.js apps - here's how I structure environment configs for zero-downtime deployments"
+• "This simple config panel pattern has saved me hours of debugging production issues"  
+• "Why I always separate staging and production environment variables (and you should too)"
+```
+
+### Photo Analysis Example  
+```
+Image: sunset_coding_session.jpg
+Score: 92/100
+
+AI Description:
+"Photograph of a laptop displaying code on a wooden desk during golden hour. The screen shows a text editor with JavaScript code, featuring syntax highlighting in a dark theme. Warm sunlight creates dramatic shadows across the keyboard and creates a cozy, productive atmosphere. A coffee mug and small succulent plant are visible in the background."
+
+Content Pitches:
+• "Golden hour coding hits different - why I do my best debugging work at sunset"
+• "This lighting setup for dev content creation cost me $0 (just good timing)"
+• "The psychology of environment in programming: how natural light affects code quality"
+```
+
+## Getting Your Data Out
+
+All the AI analysis gets stored in your Cloudinary metadata, so you own it completely. Here's how to access your analyzed images:
 
 ```javascript
 import { v2 as cloudinary } from 'cloudinary';
